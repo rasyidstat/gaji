@@ -1,0 +1,196 @@
+---
+title: "Gaji Data Scientist / Data Analyst di Indonesia"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: hide
+---
+
+Sumber data:
+
+<blockquote class="twitter-tweet"><p lang="in" dir="ltr">Iseng survey buka-bukaan salary bidang IT orang2 Indonesia. Banyak yang ngisi. Hasilnya bisa dilihat di sini:<a href="https://t.co/Upo4cbJsbA">https://t.co/Upo4cbJsbA</a><br><br>Isi surveynya di sini:<a href="https://t.co/ZjaRbnLQff">https://t.co/ZjaRbnLQff</a></p>&mdash; Petra Novandi (@petrabarus) <a href="https://twitter.com/petrabarus/status/1228607065481809921?ref_src=twsrc%5Etfw">February 15, 2020</a></blockquote> <script async src="https://platform.twitter.com/widgets.js" charset="utf-8"></script>
+
+## Data Preparation
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  fig.path="figs/",
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE,
+  dpi = 300
+)
+```
+
+```{r lib}
+library(tidyverse)
+library(googlesheets4)
+library(janitor)
+library(stringr)
+library(skimr)
+library(mrsq)
+library(ggforce)
+library(ggrepel)
+```
+
+```{r read-clean}
+read_gaji <- function(sheet_id, 
+                      filename = "gaji_", 
+                      create_new = FALSE) {
+  lst <- list.files("data", 
+                    pattern = paste0(filename, ".*.rds"),
+                    full.names = TRUE)
+  if (create_new == FALSE) {
+    x <- read_rds(lst[length(lst)])
+  } else {
+    now_str <- format(Sys.time(), "%Y%m%d%H%M%S")
+    x <- read_sheet(sheets_get(sheet_id))
+    write_rds(x, paste0("data/", filename, now_str, ".rds"))
+  }
+  return(x)
+}
+gaji <- read_gaji("1DBE6v5nYliDCUl8IQR9b-KS9-wlkw9-Wp2K0pQqNg6o")
+gaji <- gaji %>% 
+  # better column names
+  clean_names() %>% 
+  # na value jadi nol, dibagi 1 juta
+  mutate_at(vars(base_salary_setahun, total_allowance_bonus_setahun, jumlah_rsu_stock_stock_option),
+            ~replace_na(./1000000, 0)) %>% 
+  # thp per bulan
+  mutate(base_salary_sebulan = base_salary_setahun / 12,
+         total_allowance_bonus_sebulan = total_allowance_bonus_setahun / 12,
+         thp_setahun = base_salary_setahun + total_allowance_bonus_setahun,
+         thp_sebulan = thp_setahun / 12,
+         rasio_base_salary = base_salary_setahun / thp_setahun,
+         rasio_total_allowance_bonus = total_allowance_bonus_setahun / thp_setahun) %>% 
+  # lama pekerjaan
+  mutate(lama_pengalaman_tahun = map_chr(lama_pengalaman_tahun, 1, .default = NA_character_),
+         lama_pengalaman_tahun = str_extract(lama_pengalaman_tahun, "[0-9]+"),
+         lama_pengalaman_tahun = as.numeric(lama_pengalaman_tahun))
+```
+
+```{r clean-category}
+# clean city
+gaji <- gaji %>% 
+  mutate(is_remote = ifelse(str_detect(tolower(kota), "remote"), TRUE, FALSE)) %>% 
+  mutate(kota = tolower(kota),
+         kota = str_replace_all(kota, "remote|work|\\(|\\)|freelance|kota|kabupaten|kab|\\.", ""),
+         kota = trimws(kota),
+         kota = case_when(str_detect(kota, "jakarta|jakarya|jaksel") ~ "Jakarta",
+                          str_detect(kota, "singapura|singapore") ~ "Singapura",
+                          str_detect(kota, "yogya|jogja") ~ "Yogyakarta",
+                          TRUE ~ kota),
+         kota = str_to_title(kota),
+         is_abroad = ifelse(kota %in% c(
+           "Barcelona",
+           "Tokyo",
+           "United States",
+           "Amsterdam",
+           "Bandar Seri Begawan",
+           "Kuala Lumpur",
+           "Malaysia",
+           "New York",
+           "Perth",
+           "Seattle"
+         ), TRUE, FALSE))
+```
+
+```{r filter-data-only}
+gaji_data <- gaji %>% 
+  filter(str_detect(tolower(posisi_jabatan), "analyst|scientist|data|\\bml\\b|\\bai\\b|intelligence"),
+         !str_detect(tolower(posisi_jabatan), "system|security|it")) %>% 
+  arrange(desc(thp_sebulan)) %>% 
+  mutate(posisi_jabatan = str_replace_all(posisi_jabatan, "Sr.", "Senior"),
+         posisi_jabatan = str_replace_all(posisi_jabatan, "\\s+", " "),
+         posisi_jabatan = trimws(posisi_jabatan),
+         posisi_jabatan_general = case_when(
+           str_detect(tolower(posisi_jabatan), "data eng|tenaga ahli database|database engineer") ~ "Data Engineer",
+           str_detect(tolower(posisi_jabatan), "data analyst") ~ "Data Analyst",
+           str_detect(tolower(posisi_jabatan), "business|data tech lead") ~ "Data Analyst",
+           str_detect(tolower(posisi_jabatan), "product analyst") ~ "Data Analyst",
+           str_detect(tolower(posisi_jabatan), "data scientist|ml|\\bai\\b|data science") ~ "Data Scientist",
+           TRUE ~ posisi_jabatan),
+         is_lead = str_detect(tolower(posisi_jabatan), "lead|manager|head"),
+         is_senior = str_detect(tolower(posisi_jabatan), "\\bsr\\b|senior"),
+         level = case_when(is_lead ~ "Manager", 
+                           is_senior ~ "Senior")) %>% 
+  select(umur, lama_pengalaman_tahun, posisi_jabatan, posisi_jabatan_general, 
+         is_senior, is_lead, level,
+         base_salary_sebulan, thp_sebulan) %>% 
+  filter(base_salary_sebulan > 4)
+```
+
+## Data Exploration
+
+Cek data gaji keseluruhan
+
+```{r small-check}
+skim_with(numeric = list(missing = NULL,
+                         complete = NULL,
+                         n = NULL,
+                         p95 = ~quantile(., 0.95, na.rm = TRUE) ))
+gaji %>% 
+  skim()
+```
+
+Cek data gaji penggiat data
+
+```{r small-check-gaji-data}
+gaji_data %>% 
+  skim()
+```
+
+```{r viz-dist, fig.width=7, fig.height=5}
+gaji_data_viz <- gaji_data %>% 
+  bind_rows(gaji_data %>% 
+              group_by(posisi_jabatan_general, stat = "Median") %>% 
+              summarise(base_salary_sebulan = median(base_salary_sebulan),
+                        thp_sebulan = median(thp_sebulan),
+                        lama_pengalaman_tahun = median(lama_pengalaman_tahun))) %>% 
+  bind_rows(gaji_data %>% 
+              group_by(posisi_jabatan_general, stat = "Rata-rata") %>% 
+              summarise(base_salary_sebulan = mean(base_salary_sebulan),
+                        thp_sebulan = mean(thp_sebulan),
+                        lama_pengalaman_tahun = mean(lama_pengalaman_tahun))) %>% 
+  mutate(is_senior = replace_na(is_senior, FALSE),
+         is_lead = replace_na(is_lead, FALSE))
+p <- gaji_data_viz %>% 
+  # filter(!is.na(stat)) %>% 
+  ggplot(aes(posisi_jabatan_general, base_salary_sebulan, 
+             color = level,
+             size = lama_pengalaman_tahun)) +
+  geom_point(alpha = 0.6) +
+  # geom_text_repel(aes(label = stat)) +
+  coord_flip() +
+  scale_y_continuous(limits = c(0,100),
+                     breaks = c(0,10,20,30,50,80),
+                     labels = function(x) ifelse(x == 80, "80 juta rupiah", x)  ) +
+  scale_color_manual("Posisi",
+                     breaks = c("Manager", "Senior"),
+                     values = c("#984EA3", "#4DAF4A"), 
+                     na.value = "#377EB8") +
+  scale_size_continuous("Pengalaman\n(tahun)", 
+                        breaks = c(1,3,5,8,13), range = c(1,5)) +
+  labs(x = NULL,
+       y = "Base Salary / bulan") +
+  theme_nunito() +
+  theme(legend.position = "bottom") 
+p +
+  geom_mark_circle(data = gaji_data_viz %>%
+                   filter(stat == "Rata-rata"),
+                 aes(posisi_jabatan_general, base_salary_sebulan,
+                     label = paste0(stat, ": ", 
+                                    scales::comma(base_salary_sebulan, 0.01),
+                                    " juta rupiah") ), expand = 0.000001,
+                 color = NA, fill = NA, label.fill = NA, 
+                 con.type = "straight", con.linetype = 2,
+                 label.fontsize = 9,
+                 label.family = "Nunito", 
+                 size = 2)
+```
+
+```{r}
+sessionInfo()
+```
+

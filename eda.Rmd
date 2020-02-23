@@ -141,7 +141,7 @@ gaji_data %>%
   skim()
 ```
 
-```{r viz-dist, fig.width=7, fig.height=5}
+```{r viz-dist, fig.width=8, fig.height=5}
 gaji_data_viz <- gaji_data %>% 
   bind_rows(gaji_data %>% 
               group_by(posisi_jabatan_general, stat = "Median") %>% 
@@ -184,10 +184,11 @@ p +
                                     scales::comma(base_salary_sebulan, 0.01),
                                     " juta rupiah") ), expand = 0.000001,
                  color = NA, fill = NA, label.fill = NA, 
-                 con.type = "straight", con.linetype = 2,
-                 label.fontsize = 9,
-                 label.family = "Nunito", 
-                 size = 2)
+                 con.type = "straight", 
+                 con.colour = "grey35",
+                 label.colour = "grey35",
+                 label.fontsize = 9.5,
+                 label.family = "Nunito")
 ```
 
 ```{r}

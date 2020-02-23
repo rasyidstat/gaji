@@ -8,7 +8,9 @@ Survei gaji penggiat IT di Indonesia
 
 ## Eksplorasi data
 
-
+<center>
+<img src="figs/viz-dist-1.png" width="80%">
+</center>
 
 
 	
